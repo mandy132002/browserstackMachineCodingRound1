@@ -14,30 +14,47 @@ app.get('/log', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+function getLastLines(filePath, n) {
+    const data = fs.readFileSync(filePath, 'utf8');
+    const lines = data.trim().split('\n');
+    return lines.slice(-n);
+}
+
+
 io.on('connection', (socket) => {
-  console.log('New client connected');
+    console.log('New client connected');
+    socket.emit('init', getLastLines(logFile, 10));
+    socket.on('disconnect', () => {
+        console.log('Client disconnected');
+    });
+});
 
-  fs.readFile(logFile, 'utf8', (err, data) => {
-    if (err) {
-      console.error('Error reading log file:', err);
-      return;
+let fileSize = fs.statSync(logFile).size;
+
+fs.watch(logFile, (eventType) => {
+    if (eventType === 'change') {
+        const newSize = fs.statSync(logFile).size;
+
+        if (newSize > fileSize) {
+            const stream = fs.createReadStream(logFile, {
+                start: fileSize,
+                end: newSize,
+                encoding: 'utf8'
+            });
+            let buffer = '';
+            stream.on('data', (chunk) => {
+                buffer += chunk;
+            });
+            stream.on('end', () => {
+                fileSize = newSize;
+                const newLines = buffer.trim();
+                if (newLines) {
+                    console.log('New log:', newLines);
+                    io.emit('log', newLines);
+                }
+            });
+        }
     }
-    let lines = data.split('\n').filter((line) => line.trim() !== '');
-    const lastTen = lines.slice(-10);
-    socket.emit('init', lastTen);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('Client disconnected');
-  });
-});
-
-const tail = new Tail(logFile);
-tail.on('line', (line) => {
-  io.emit('log', line);
-});
-tail.on('error', (error) => {
-  console.error('Tail error:', error);
 });
 
 const PORT = 3000;
